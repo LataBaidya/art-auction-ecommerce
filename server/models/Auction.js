@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const AuctionProductSchema = new mongoose.Schema(
 	{
 		image: String,
+		imagePublicId: String,
 		title: String,
 		description: String,
 		artist: String,
@@ -26,6 +27,19 @@ const AuctionProductSchema = new mongoose.Schema(
 		startTime: Date,
 		endTime: Date,
 		isActive: Boolean,
+		status: {
+			type: String,
+			enum: ["upcoming", "running", "closed"],
+			default: "upcoming",
+		},
+		isSold: {
+			type: Boolean,
+			default: false,
+		},
+		winnerNotified: {
+			type: Boolean,
+			default: false,
+		},
 	},
 	{ timestamps: true }
 );
