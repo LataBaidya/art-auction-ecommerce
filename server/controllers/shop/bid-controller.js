@@ -1,10 +1,16 @@
 const Auction = require("../../models/Auction");
+const {
+	createNotificationService,
+} = require("../admin/notification-controller");
+const sanitize = require("mongo-sanitize");
+const { getIO } = require("../../helper/socket");
 
 const placeBid = async (req, res) => {
 	try {
-		const { userId, auctionId, bidAmount } = req.body;
+		const userId = sanitize(req.body.userId);
+		const auctionId = sanitize(req.body.auctionId);
+		const bidAmount = sanitize(req.body.bidAmount);
 
-		// Basic validation
 		if (
 			!userId ||
 			!auctionId ||
@@ -17,7 +23,6 @@ const placeBid = async (req, res) => {
 			});
 		}
 
-		// Fetch auction
 		const auction = await Auction.findById(auctionId);
 		if (!auction) {
 			return res
@@ -25,7 +30,6 @@ const placeBid = async (req, res) => {
 				.json({ success: false, message: "Auction not found" });
 		}
 
-		// Time and status check
 		const now = new Date();
 		if (
 			!auction.isActive ||
@@ -38,30 +42,80 @@ const placeBid = async (req, res) => {
 			});
 		}
 
-		// Calculate minimum allowed bid
-		const minimumAllowedBid = auction.currentBid
-			? auction.currentBid + auction.bidIncrement
-			: auction.startingBid;
-
-		if (bidAmount < minimumAllowedBid) {
+		if (auction.highestBidder?.toString() === userId) {
 			return res.status(400).json({
 				success: false,
-				message: `Bid must be at least ৳${minimumAllowedBid}`,
+				message: "You are already the highest bidder",
 			});
 		}
 
-		// Update currentBid and highestBidder
-		auction.currentBid = bidAmount;
-		auction.highestBidder = userId;
+		let minimumAllowedBid;
+		if (auction.currentBid) {
+			minimumAllowedBid = auction.currentBid + auction.bidIncrement;
+			if (bidAmount < minimumAllowedBid) {
+				return res.status(400).json({
+					success: false,
+					message: `Bid must be at least ৳${minimumAllowedBid}`,
+				});
+			}
+		} else {
+			if (bidAmount !== auction.startingBid) {
+				return res.status(400).json({
+					success: false,
+					message: `First bid must be exactly ৳${auction.startingBid}`,
+				});
+			}
+		}
 
-		// Add to bid history
-		auction.bidHistory.push({
-			bidder: userId,
-			amount: bidAmount,
-			time: now,
+		const updatedAuction = await Auction.findOneAndUpdate(
+			{
+				_id: auctionId,
+				isActive: true,
+				startTime: { $lte: now },
+				endTime: { $gte: now },
+				$or: [
+					{ currentBid: { $lt: bidAmount } },
+					{ currentBid: { $exists: false } },
+				],
+			},
+			{
+				$set: {
+					currentBid: bidAmount,
+					highestBidder: userId,
+				},
+				$push: {
+					bidHistory: {
+						bidder: userId,
+						amount: bidAmount,
+						time: now,
+					},
+				},
+			},
+			{ new: true }
+		);
+
+		if (!updatedAuction) {
+			return res.status(400).json({
+				success: false,
+				message:
+					"Bid failed — another user may have placed a higher bid already",
+			});
+		}
+
+		await createNotificationService({
+			title: "New Bid Placed",
+			message: `User ${userId} placed a new bid of ৳${bidAmount} on auction ${auction.title}`,
+			type: "auction",
 		});
 
-		await auction.save();
+		const io = getIO();
+
+		io.to(auctionId).emit("newBid", {
+			auctionId,
+			currentBid: updatedAuction.currentBid,
+			highestBidder: updatedAuction.highestBidder,
+			bidHistory: updatedAuction.bidHistory,
+		});
 
 		res.status(200).json({
 			success: true,
@@ -80,7 +134,7 @@ const placeBid = async (req, res) => {
 
 const fetchBidItems = async (req, res) => {
 	try {
-		const { userId } = req.params;
+		const userId = sanitize(req.params.userId);
 
 		if (!userId) {
 			return res
@@ -88,7 +142,6 @@ const fetchBidItems = async (req, res) => {
 				.json({ success: false, message: "User ID is required" });
 		}
 
-		// Find all auctions where the user has placed any bid
 		const auctions = await Auction.find({ "bidHistory.bidder": userId });
 
 		if (!auctions || auctions.length === 0) {
@@ -97,12 +150,10 @@ const fetchBidItems = async (req, res) => {
 				.json({ success: false, message: "No auction items found" });
 		}
 
-		// Build response with highest user bid per item
 		const items = auctions.map((item) => {
-			const userBids = item.bidHistory.filter(
-				(bid) => bid.bidder.toString() === userId
-			);
-
+			const userBids = item.bidHistory
+				.filter((bid) => bid.bidder.toString() === userId)
+				.sort((a, b) => new Date(b.time) - new Date(a.time));
 			const highestUserBid = userBids.length
 				? Math.max(...userBids.map((b) => b.amount))
 				: null;
@@ -113,6 +164,7 @@ const fetchBidItems = async (req, res) => {
 				title: item.title,
 				currentBid: item.currentBid,
 				userBid: highestUserBid,
+				lastBidTime: userBids[0]?.time || null,
 			};
 		});
 
@@ -122,45 +174,5 @@ const fetchBidItems = async (req, res) => {
 		return res.status(500).json({ success: false, message: "Server error" });
 	}
 };
-
-// const fetchBidItems = async (req, res) => {
-// 	try {
-// 		const { userId } = req.params;
-
-// 		if (!userId) {
-// 			return res
-// 				.status(400)
-// 				.json({ success: false, message: "User ID is required" });
-// 		}
-
-// 		// Find auctions where user has placed a bid
-// 		const auctions = await Auction.find({ "bidHistory.bidder": userId });
-
-// 		if (!auctions || auctions.length === 0) {
-// 			return res
-// 				.status(404)
-// 				.json({ success: false, message: "No auction items found" });
-// 		}
-
-// 		// Map response data
-// 		const items = auctions.map((item) => {
-// 			const userBid = item.bidHistory.find(
-// 				(bid) => bid.bidder.toString() === userId
-// 			);
-// 			return {
-// 				id: item._id,
-// 				image: item.image,
-// 				title: item.title,
-// 				currentBid: item.currentBid,
-// 				userBid: userBid?.amount || null,
-// 			};
-// 		});
-
-// 		return res.status(200).json({ success: true, data: items });
-// 	} catch (error) {
-// 		console.error("fetchBidItems error:", error);
-// 		return res.status(500).json({ success: false, message: "Server error" });
-// 	}
-// };
 
 module.exports = { placeBid, fetchBidItems };
