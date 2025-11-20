@@ -1,22 +1,32 @@
-const { imageUploadUtil } = require("../../helper/cloudinary");
+const cloudinary = require("cloudinary").v2;
+const mongoSanitize = require("mongo-sanitize");
+const {
+	imageUploadUtil,
+	deleteImageFromCloudinary,
+} = require("../../helper/cloudinary");
 const Product = require("../../models/Product");
 
 const handleImageUpload = async (req, res) => {
 	try {
 		if (!req.file) {
-			return res
-				.status(400)
-				.json({ success: false, message: "No file uploaded" });
+			return res.status(400).json({
+				success: false,
+				message: "No image file uploaded",
+			});
 		}
 
 		const result = await imageUploadUtil(req.file.buffer);
 
-		res.json({
+		res.status(200).json({
 			success: true,
-			result,
+			message: "Image uploaded successfully",
+			data: {
+				public_id: result.public_id,
+				url: result.secure_url,
+			},
 		});
 	} catch (error) {
-		console.log("Cloudinary Upload Error:", error);
+		console.error("Cloudinary Upload Error:", error);
 		res.status(500).json({
 			success: false,
 			message: "Image upload failed",
@@ -24,25 +34,34 @@ const handleImageUpload = async (req, res) => {
 	}
 };
 
-//add product
 const addProduct = async (req, res) => {
 	try {
+		const sanitizedBody = mongoSanitize(req.body);
+
 		const {
 			image,
+			imagePublicId,
 			title,
 			description,
 			category,
-			brand,
 			price,
 			salePrice,
 			totalStock,
-		} = req.body;
+		} = sanitizedBody;
+
+		if (!title || !category || !price || !totalStock) {
+			return res.status(400).json({
+				success: false,
+				message: "Missing required fields",
+			});
+		}
+
 		const newlyAddedProduct = new Product({
 			image,
+			imagePublicId,
 			title,
 			description,
 			category,
-			brand,
 			price,
 			salePrice,
 			totalStock,
@@ -60,10 +79,11 @@ const addProduct = async (req, res) => {
 	}
 };
 
-//get all products
 const fetchAllProducts = async (req, res) => {
 	try {
-		const productList = await Product.find({});
+		const sanitizedQuery = mongoSanitize(req.query);
+
+		const productList = await Product.find({}).sort({ createdAt: -1 });
 		res.status(200).json({ success: true, data: productList });
 	} catch (error) {
 		console.log(error);
@@ -71,12 +91,15 @@ const fetchAllProducts = async (req, res) => {
 	}
 };
 
-//update product
 const editProduct = async (req, res) => {
 	try {
-		const { id } = req.params;
+		const sanitizedParams = mongoSanitize(req.params);
+		const sanitizedBody = mongoSanitize(req.body);
+
+		const { id } = sanitizedParams;
 		const {
 			image,
+			imagePublicId,
 			title,
 			description,
 			category,
@@ -84,7 +107,9 @@ const editProduct = async (req, res) => {
 			price,
 			salePrice,
 			totalStock,
-		} = req.body;
+		} = sanitizedBody;
+
+		console.log("Editing product salePrice:", salePrice);
 
 		const findProduct = await Product.findById(id);
 		if (!findProduct) {
@@ -93,17 +118,24 @@ const editProduct = async (req, res) => {
 				message: "Product not found",
 			});
 		}
+
+		if (image && image !== findProduct.image && findProduct.imagePublicId) {
+			await deleteImageFromCloudinary(findProduct.imagePublicId);
+		}
+
 		findProduct.title = title || findProduct.title;
 		findProduct.description = description || findProduct.description;
 		findProduct.category = category || findProduct.category;
 		findProduct.brand = brand || findProduct.brand;
 		findProduct.price = price === "" ? 0 : price || findProduct.price;
-		findProduct.salePrice =
-			salePrice === "" ? 0 : salePrice || findProduct.salePrice;
-		findProduct.totalStock = totalStock || findProduct.totalStock;
+		findProduct.salePrice = salePrice ?? findProduct.salePrice;
+		findProduct.totalStock = totalStock ?? findProduct.totalStock;
+
 		findProduct.image = image || findProduct.image;
+		findProduct.imagePublicId = imagePublicId || findProduct.imagePublicId;
 
 		await findProduct.save();
+
 		res.status(200).json({
 			success: true,
 			data: findProduct,
@@ -118,15 +150,22 @@ const editProduct = async (req, res) => {
 //delete product
 const deleteProduct = async (req, res) => {
 	try {
-		const { id } = req.params;
+		const sanitizedParams = mongoSanitize(req.params);
+		const { id } = sanitizedParams;
 
-		const deletedProduct = await Product.findByIdAndDelete(id);
-		if (!deletedProduct) {
+		const product = await Product.findById(id);
+		if (!product) {
 			return res.status(404).json({
 				success: false,
 				message: "Product not found",
 			});
 		}
+
+		if (product.imagePublicId) {
+			await cloudinary.uploader.destroy(product.imagePublicId);
+		}
+
+		await product.deleteOne();
 
 		res.status(200).json({
 			success: true,

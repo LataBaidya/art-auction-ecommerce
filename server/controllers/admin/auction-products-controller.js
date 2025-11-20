@@ -1,10 +1,15 @@
 const AuctionProduct = require("../../models/Auction");
+const cloudinary = require("cloudinary").v2;
+const mongoSanitize = require("mongo-sanitize");
+const { deleteImageFromCloudinary } = require("../../helper/cloudinary");
 
-//add auctionable product
 const addAuctionProduct = async (req, res) => {
 	try {
+		const sanitizedBody = mongoSanitize(req.body);
+
 		const {
 			image,
+			imagePublicId,
 			title,
 			description,
 			artist,
@@ -13,7 +18,7 @@ const addAuctionProduct = async (req, res) => {
 			startTime,
 			endTime,
 			isActive,
-		} = req.body;
+		} = sanitizedBody;
 
 		if (!title || !artist || !startingBid || !startTime || !endTime) {
 			return res.status(400).json({
@@ -24,6 +29,7 @@ const addAuctionProduct = async (req, res) => {
 
 		const newlyAddedProduct = new AuctionProduct({
 			image,
+			imagePublicId,
 			title,
 			description,
 			artist,
@@ -51,10 +57,13 @@ const addAuctionProduct = async (req, res) => {
 	}
 };
 
-//get all auctionable products
 const fetchAllAuctionProducts = async (req, res) => {
 	try {
-		const auctionProductList = await AuctionProduct.find({});
+		const sanitizedQuery = mongoSanitize(req.query);
+
+		const auctionProductList = await AuctionProduct.find({}).sort({
+			createdAt: -1,
+		});
 		res.status(200).json({ success: true, data: auctionProductList });
 	} catch (error) {
 		console.log(error);
@@ -65,9 +74,13 @@ const fetchAllAuctionProducts = async (req, res) => {
 //update auctionable product
 const editAuctionProduct = async (req, res) => {
 	try {
-		const { id } = req.params;
+		const sanitizedParams = mongoSanitize(req.params);
+		const sanitizedBody = mongoSanitize(req.body);
+
+		const { id } = sanitizedParams;
 		const {
 			image,
+			imagePublicId,
 			title,
 			description,
 			artist,
@@ -76,7 +89,7 @@ const editAuctionProduct = async (req, res) => {
 			startTime,
 			endTime,
 			isActive,
-		} = req.body;
+		} = sanitizedBody;
 
 		const findAuctionProduct = await AuctionProduct.findById(id);
 		if (!findAuctionProduct) {
@@ -84,6 +97,14 @@ const editAuctionProduct = async (req, res) => {
 				success: false,
 				message: "Auction Product not found",
 			});
+		}
+
+		if (
+			image &&
+			image !== findAuctionProduct.image &&
+			findAuctionProduct.imagePublicId
+		) {
+			await deleteImageFromCloudinary(findAuctionProduct.imagePublicId);
 		}
 
 		findAuctionProduct.title = title || findAuctionProduct.title;
@@ -114,17 +135,24 @@ const editAuctionProduct = async (req, res) => {
 	}
 };
 
-//delete auctionable product
 const deleteAuctionProduct = async (req, res) => {
 	try {
-		const { id } = req.params;
-		const deletedProduct = await AuctionProduct.findByIdAndDelete(id);
+		const sanitizedParams = mongoSanitize(req.params);
+		const { id } = sanitizedParams;
+
+		const deletedProduct = await AuctionProduct.findById(id);
 		if (!deletedProduct) {
 			return res.status(404).json({
 				success: false,
 				message: "Auctionable product not found",
 			});
 		}
+
+		if (deletedProduct.imagePublicId) {
+			await cloudinary.uploader.destroy(deletedProduct.imagePublicId);
+		}
+
+		await deletedProduct.deleteOne();
 		res.status(200).json({
 			success: true,
 			message: "Auctionable product deleted successfully",
