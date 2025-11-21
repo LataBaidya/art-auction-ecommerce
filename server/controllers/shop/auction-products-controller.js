@@ -1,8 +1,11 @@
 const AuctionProduct = require("../../models/Auction");
+const sanitize = require("mongo-sanitize");
 
 const getAllAuctionProducts = async (req, res) => {
 	try {
-		const auctionProductList = await AuctionProduct.find({});
+		const auctionProductList = await AuctionProduct.find({}).sort({
+			createdAt: -1,
+		});
 		res.status(200).json({ success: true, data: auctionProductList });
 	} catch (error) {
 		console.log(error);
@@ -12,7 +15,7 @@ const getAllAuctionProducts = async (req, res) => {
 
 const getAuctionProductDetails = async (req, res) => {
 	try {
-		const { id } = req.params;
+		const id = sanitize(req.params.id);
 		const product = await AuctionProduct.findById(id);
 		if (!product)
 			return res

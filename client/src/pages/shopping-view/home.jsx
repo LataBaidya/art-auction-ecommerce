@@ -1,18 +1,19 @@
-import CreatorsPick from "@/components/home/CreatorsPick";
-import FeaturedGallery from "@/components/home/FeaturedGallery";
-import Hero from "@/components/home/Hero";
-import NewArivals from "@/components/home/NewArivals";
-import React from "react";
+import FAQAccordion from '@/components/shopping-view/home/FAQAccordion';
+import FeaturedGallery from '@/components/shopping-view/home/FeaturedGallery';
+import FeatureHighlights from '@/components/shopping-view/home/FeatureHighlights';
+import Hero from '@/components/shopping-view/home/Hero';
+import NewArtists from '@/components/shopping-view/home/NewArtists';
 
 const ShoppingHome = () => {
-	return (
-		<>
-			<Hero />
-			<CreatorsPick />
-			<NewArivals />
-			<FeaturedGallery />
-		</>
-	);
+  return (
+    <>
+      <Hero />
+      <FeatureHighlights />
+      <NewArtists />
+      <FeaturedGallery />
+      <FAQAccordion />
+    </>
+  );
 };
 
 export default ShoppingHome;
